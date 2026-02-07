@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode
+build/
+DerivedData/
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+project.xcworkspace/
+
+# Swift Package Manager
+.build/
+Packages/
+Package.resolved
+
+# Logs
+*.log
