@@ -7,9 +7,7 @@ enum PanelTab: String, CaseIterable {
 
 struct PanelContentView: View {
     let synonyms: [Synonym]
-    @Binding var selectedIndex: Int
-    @Binding var activeTab: PanelTab
-    let translationState: TranslationState
+    @ObservedObject var panelState: PanelState
     let onSelect: (Synonym) -> Void
     let onSelectTranslation: (String) -> Void
     let onDismiss: () -> Void
@@ -24,6 +22,7 @@ struct PanelContentView: View {
                 Text(originalWord)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Spacer()
                 Text(shortcutDisplayString)
                     .font(.system(size: 10, weight: .regular, design: .monospaced))
@@ -38,16 +37,16 @@ struct PanelContentView: View {
                 HStack(spacing: 0) {
                     ForEach(PanelTab.allCases, id: \.self) { tab in
                         Button {
-                            activeTab = tab
+                            panelState.activeTab = tab
                         } label: {
                             Text(tab.rawValue)
-                                .font(.system(size: 11, weight: activeTab == tab ? .semibold : .regular))
-                                .foregroundStyle(activeTab == tab ? .primary : .secondary)
+                                .font(.system(size: 11, weight: panelState.activeTab == tab ? .semibold : .regular))
+                                .foregroundStyle(panelState.activeTab == tab ? .primary : .secondary)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 5)
                                 .background(
                                     RoundedRectangle(cornerRadius: 5)
-                                        .fill(activeTab == tab ? Color.primary.opacity(0.08) : Color.clear)
+                                        .fill(panelState.activeTab == tab ? Color.primary.opacity(0.08) : Color.clear)
                                 )
                         }
                         .buttonStyle(.plain)
@@ -60,18 +59,12 @@ struct PanelContentView: View {
             Divider()
                 .padding(.horizontal, 8)
 
-            // Content
+            // Content — scrollable, fills remaining space
             if let errorMessage = errorMessage {
                 errorContent(errorMessage)
             } else {
-                switch activeTab {
-                case .synonymes:
-                    synonymsContent
-                case .traduction:
-                    TranslationView(state: translationState) { translated in
-                        onSelectTranslation(translated)
-                    }
-                }
+                contentArea
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
             // Footer hints
@@ -79,13 +72,27 @@ struct PanelContentView: View {
                 footerHints
             }
         }
-        .frame(width: 240)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
                 .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
         )
+    }
+
+    // MARK: - Content area
+
+    @ViewBuilder
+    private var contentArea: some View {
+        switch panelState.activeTab {
+        case .synonymes:
+            synonymsContent
+        case .traduction:
+            TranslationView(state: panelState.translationState) { translated in
+                onSelectTranslation(translated)
+            }
+        }
     }
 
     // MARK: - Synonyms content
@@ -105,7 +112,7 @@ struct PanelContentView: View {
                         ForEach(Array(synonyms.enumerated()), id: \.element.id) { index, synonym in
                             SynonymRow(
                                 synonym: synonym,
-                                isSelected: index == selectedIndex
+                                isSelected: index == panelState.selectedIndex
                             )
                             .id(index)
                             .onTapGesture {
@@ -116,8 +123,7 @@ struct PanelContentView: View {
                     .padding(.vertical, 6)
                     .padding(.horizontal, 6)
                 }
-                .frame(maxHeight: 160)
-                .onChange(of: selectedIndex) { _, newValue in
+                .onChange(of: panelState.selectedIndex) { _, newValue in
                     proxy.scrollTo(newValue, anchor: .center)
                 }
             }
@@ -149,13 +155,16 @@ struct PanelContentView: View {
 
     private var footerHints: some View {
         HStack(spacing: 4) {
-            if activeTab == .synonymes && !synonyms.isEmpty {
+            if panelState.activeTab == .synonymes && !synonyms.isEmpty {
                 Text("↑↓")
             }
             Text("Tab")
-            if activeTab == .synonymes && !synonyms.isEmpty {
+            if panelState.activeTab == .traduction {
+                Text("⇧Tab")
+            }
+            if case .success = panelState.translationState, panelState.activeTab == .traduction {
                 Text("↩")
-            } else if case .success = translationState, activeTab == .traduction {
+            } else if panelState.activeTab == .synonymes && !synonyms.isEmpty {
                 Text("↩")
             }
             Text("Esc")

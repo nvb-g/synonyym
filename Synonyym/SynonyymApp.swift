@@ -55,6 +55,7 @@ final class AppState: ObservableObject {
     private var caretRect: CGRect?
     private var isProcessing = false
     private var settingsWindow: NSWindow?
+    private var currentTranslationDirection: TranslationDirection = .frToEn
 
     init() {
         setupHotkey()
@@ -144,18 +145,33 @@ final class AppState: ObservableObject {
             return
         }
 
-        // 1. Save clipboard and capture caret position
+        // 1. Save clipboard, snapshot mouse position as fallback anchor
         isProcessing = true
         clipboardManager.save()
-        caretRect = textInteractor.getCaretRect()
-        slog("caret rect: \(caretRect.map { "\($0)" } ?? "nil")")
+        caretRect = nil  // will be captured after selection
+        let mouseSnapshot = NSEvent.mouseLocation
+        slog("mouse snapshot: \(mouseSnapshot)")
 
-        // 2. Select word before cursor (Option+Shift+Left)
+        // 2. Check if user already has text selected (multi-word support)
+        if let preSelected = textInteractor.getSelectedText() {
+            let cleaned = preSelected.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleaned.isEmpty {
+                slog("pre-selected text: '\(cleaned)'")
+                captureCaretRect(mouseSnapshot: mouseSnapshot)
+                processWord(cleaned)
+                return
+            }
+        }
+
+        // 3. No pre-selection: select word before cursor (Option+Shift+Left)
         textInteractor.selectWordBeforeCursor()
 
-        // 3. Read selected text — try AX API first, clipboard fallback
+        // 4. Read selected text — try AX API first, clipboard fallback
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self = self else { return }
+
+            // Capture caret rect now that text is selected
+            self.captureCaretRect(mouseSnapshot: mouseSnapshot)
 
             // Primary: read selected text via Accessibility API (fast, no clipboard)
             if let text = self.textInteractor.getSelectedText() {
@@ -175,6 +191,19 @@ final class AppState: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                 self?.captureAndFetchSynonyms()
             }
+        }
+    }
+
+    private func captureCaretRect(mouseSnapshot: NSPoint) {
+        let axRect = textInteractor.getCaretRect()
+        // Use AX rect if valid (non-zero), otherwise fall back to mouse position
+        if let r = axRect, r.width + r.height > 0 {
+            caretRect = r
+            slog("caret rect (AX): \(r)")
+        } else {
+            // Build a small rect around the mouse position
+            caretRect = CGRect(x: mouseSnapshot.x, y: mouseSnapshot.y, width: 0, height: 16)
+            slog("caret rect (mouse fallback): \(mouseSnapshot)")
         }
     }
 
@@ -199,10 +228,12 @@ final class AppState: ObservableObject {
 
         // Launch async translation (isFrench = word found in thesaurus)
         let isFrench = !synonyms.isEmpty
+        currentTranslationDirection = isFrench ? .frToEn : .enToFr
         translationService.translate(word: word, isFrench: isFrench) { [weak self] result in
             guard let self = self else { return }
             switch result {
             case .success(let translated, let direction):
+                self.currentTranslationDirection = direction
                 self.synonymPanel.updateTranslation(.success(translated: translated, direction: direction))
             case .error(let message):
                 self.synonymPanel.updateTranslation(.error(message))
@@ -273,8 +304,37 @@ final class AppState: ObservableObject {
             onSelectTranslation: { [weak self] text in
                 self?.replaceWithTranslation(text)
             },
+            onSwapTranslation: { [weak self] in
+                self?.swapTranslationDirection()
+            },
             shortcutDisplayString: shortcutDisplayString
         )
+    }
+
+    private func swapTranslationDirection() {
+        let newDirection: TranslationDirection
+        switch currentTranslationDirection {
+        case .frToEn:
+            newDirection = .enToFr
+        case .enToFr:
+            newDirection = .frToEn
+        }
+        currentTranslationDirection = newDirection
+
+        // Show loading state
+        synonymPanel.updateTranslation(.loading)
+
+        let isFrench = (newDirection == .frToEn)
+        translationService.translate(word: originalWord, isFrench: isFrench) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let translated, let direction):
+                self.currentTranslationDirection = direction
+                self.synonymPanel.updateTranslation(.success(translated: translated, direction: direction))
+            case .error(let message):
+                self.synonymPanel.updateTranslation(.error(message))
+            }
+        }
     }
 
     private func replaceSynonym(_ synonym: Synonym) {
