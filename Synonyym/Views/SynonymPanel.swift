@@ -15,6 +15,12 @@ final class SynonymPanel {
     private var shortcutDisplayString: String = "⌘⇧S"
     private var onSelect: ((Synonym) -> Void)?
     private var onDismiss: (() -> Void)?
+    private var onSelectTranslation: ((String) -> Void)?
+
+    // Translation state
+    private var activeTab: PanelTab = .synonymes
+    private var translationState: TranslationState = .loading
+    private var translationResult: String?
 
     // Static reference for the C callback
     private static var current: SynonymPanel?
@@ -25,6 +31,7 @@ final class SynonymPanel {
         caretRect: CGRect? = nil,
         onSelect: @escaping (Synonym) -> Void,
         onDismiss: @escaping () -> Void,
+        onSelectTranslation: @escaping (String) -> Void = { _ in },
         errorMessage: String? = nil,
         shortcutDisplayString: String = "⌘⇧S"
     ) {
@@ -35,8 +42,12 @@ final class SynonymPanel {
         self.selectedIndex = 0
         self.onSelect = onSelect
         self.onDismiss = onDismiss
+        self.onSelectTranslation = onSelectTranslation
         self.errorMessage = errorMessage
         self.shortcutDisplayString = shortcutDisplayString
+        self.activeTab = .synonymes
+        self.translationState = .loading
+        self.translationResult = nil
         SynonymPanel.current = self
 
         // Create the panel
@@ -59,7 +70,7 @@ final class SynonymPanel {
 
         setHostingView(on: panel)
 
-        let panelSize = NSSize(width: 240, height: computeHeight(for: synonyms))
+        let panelSize = NSSize(width: 240, height: computeHeight())
         let origin = computeOrigin(panelSize: panelSize, caretRect: caretRect)
         panel.setFrame(NSRect(origin: origin, size: panelSize), display: true)
 
@@ -97,11 +108,44 @@ final class SynonymPanel {
         errorMessage = nil
         onSelect = nil
         onDismiss = nil
+        onSelectTranslation = nil
+        activeTab = .synonymes
+        translationState = .loading
+        translationResult = nil
         SynonymPanel.current = nil
     }
 
     var isVisible: Bool {
         panel?.isVisible ?? false
+    }
+
+    func updateTranslation(_ state: TranslationState) {
+        translationState = state
+        if case .success(let translated, _) = state {
+            translationResult = translated
+        } else {
+            translationResult = nil
+        }
+        refreshContent()
+        resizePanel()
+    }
+
+    // MARK: - Tab switching
+
+    private func switchTab() {
+        activeTab = (activeTab == .synonymes) ? .traduction : .synonymes
+        refreshContent()
+        resizePanel()
+    }
+
+    private func resizePanel() {
+        guard let panel = panel else { return }
+        let newHeight = computeHeight()
+        var frame = panel.frame
+        let heightDiff = newHeight - frame.height
+        frame.origin.y -= heightDiff
+        frame.size.height = newHeight
+        panel.setFrame(frame, display: true)
     }
 
     // MARK: - Global NSEvent Monitors (fallback, always works)
@@ -133,20 +177,29 @@ final class SynonymPanel {
         if eventTap != nil { return }
 
         switch Int(event.keyCode) {
+        case kVK_Tab:
+            switchTab()
+
         case kVK_DownArrow:
-            if !synonyms.isEmpty {
+            if activeTab == .synonymes && !synonyms.isEmpty {
                 selectedIndex = min(selectedIndex + 1, synonyms.count - 1)
                 refreshContent()
             }
         case kVK_UpArrow:
-            if !synonyms.isEmpty {
+            if activeTab == .synonymes && !synonyms.isEmpty {
                 selectedIndex = max(selectedIndex - 1, 0)
                 refreshContent()
             }
         case kVK_Return:
-            if !synonyms.isEmpty && selectedIndex < synonyms.count {
-                let synonym = synonyms[selectedIndex]
-                onSelect?(synonym)
+            if activeTab == .synonymes {
+                if !synonyms.isEmpty && selectedIndex < synonyms.count {
+                    let synonym = synonyms[selectedIndex]
+                    onSelect?(synonym)
+                }
+            } else if activeTab == .traduction {
+                if let result = translationResult {
+                    onSelectTranslation?(result)
+                }
             }
         case kVK_Escape:
             onDismiss?()
@@ -173,9 +226,15 @@ final class SynonymPanel {
                 let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
                 switch Int(keyCode) {
+                case kVK_Tab:
+                    DispatchQueue.main.async {
+                        panel.switchTab()
+                    }
+                    return nil
+
                 case kVK_DownArrow:
                     DispatchQueue.main.async {
-                        if !panel.synonyms.isEmpty {
+                        if panel.activeTab == .synonymes && !panel.synonyms.isEmpty {
                             panel.selectedIndex = min(panel.selectedIndex + 1, panel.synonyms.count - 1)
                             panel.refreshContent()
                         }
@@ -184,7 +243,7 @@ final class SynonymPanel {
 
                 case kVK_UpArrow:
                     DispatchQueue.main.async {
-                        if !panel.synonyms.isEmpty {
+                        if panel.activeTab == .synonymes && !panel.synonyms.isEmpty {
                             panel.selectedIndex = max(panel.selectedIndex - 1, 0)
                             panel.refreshContent()
                         }
@@ -193,9 +252,15 @@ final class SynonymPanel {
 
                 case kVK_Return:
                     DispatchQueue.main.async {
-                        if !panel.synonyms.isEmpty && panel.selectedIndex < panel.synonyms.count {
-                            let synonym = panel.synonyms[panel.selectedIndex]
-                            panel.onSelect?(synonym)
+                        if panel.activeTab == .synonymes {
+                            if !panel.synonyms.isEmpty && panel.selectedIndex < panel.synonyms.count {
+                                let synonym = panel.synonyms[panel.selectedIndex]
+                                panel.onSelect?(synonym)
+                            }
+                        } else if panel.activeTab == .traduction {
+                            if let result = panel.translationResult {
+                                panel.onSelectTranslation?(result)
+                            }
                         }
                     }
                     return nil
@@ -244,19 +309,34 @@ final class SynonymPanel {
             set: { [weak self] in self?.selectedIndex = $0 }
         )
 
+        let tabBinding = Binding<PanelTab>(
+            get: { [weak self] in self?.activeTab ?? .synonymes },
+            set: { [weak self] newTab in
+                self?.activeTab = newTab
+                self?.resizePanel()
+            }
+        )
+
         let currentSynonyms = self.synonyms
         let capturedOnSelect = self.onSelect
+        let capturedOnSelectTranslation = self.onSelectTranslation
         let capturedOnDismiss = self.onDismiss
         let word = self.originalWord
         let shortcut = self.shortcutDisplayString
         let error = self.errorMessage
+        let currentTranslationState = self.translationState
 
         let hostingView = NSHostingView(
-            rootView: SynonymListView(
+            rootView: PanelContentView(
                 synonyms: currentSynonyms,
                 selectedIndex: selectedBinding,
+                activeTab: tabBinding,
+                translationState: currentTranslationState,
                 onSelect: { synonym in
                     capturedOnSelect?(synonym)
+                },
+                onSelectTranslation: { translated in
+                    capturedOnSelectTranslation?(translated)
                 },
                 onDismiss: {
                     capturedOnDismiss?()
@@ -299,10 +379,8 @@ final class SynonymPanel {
         var y: CGFloat
 
         // Vertical: prefer below the caret line, flip above if not enough room
-        let spaceBelow = anchor.y - screenFrame.minY
-        let spaceAbove = screenFrame.maxY - anchor.y
-
         if let caret = caretRect {
+            let spaceBelow = anchor.y - screenFrame.minY
             if spaceBelow >= panelSize.height + gap {
                 // Place below the caret
                 y = anchor.y - panelSize.height - gap
@@ -312,6 +390,7 @@ final class SynonymPanel {
             }
         } else {
             // Mouse fallback: below cursor
+            let spaceBelow = anchor.y - screenFrame.minY
             if spaceBelow >= panelSize.height + gap {
                 y = anchor.y - panelSize.height - gap
             } else {
@@ -337,12 +416,23 @@ final class SynonymPanel {
         return NSPoint(x: x, y: y)
     }
 
-    private func computeHeight(for synonyms: [Synonym]) -> CGFloat {
-        if synonyms.isEmpty {
-            return 80
+    private func computeHeight() -> CGFloat {
+        if errorMessage != nil {
+            return 110
         }
-        let contentHeight = CGFloat(30 + 1 + synonyms.count * 28 + 20)
-        // Cap at ~7 visible rows, scroll for the rest
-        return min(contentHeight, 250)
+
+        // Tab bar height + header
+        let headerAndTabs: CGFloat = 60
+
+        switch activeTab {
+        case .synonymes:
+            if synonyms.isEmpty {
+                return headerAndTabs + 50 + 20 // "Aucun synonyme" + footer
+            }
+            let contentHeight = CGFloat(synonyms.count * 28 + 12)
+            return headerAndTabs + min(contentHeight, 168) + 20 // +20 for footer
+        case .traduction:
+            return headerAndTabs + 70 + 20 // translation content + footer
+        }
     }
 }

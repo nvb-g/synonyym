@@ -46,6 +46,7 @@ final class AppState: ObservableObject {
 
     private let hotkeyManager = HotkeyManager()
     private let synonymService = SynonymService()
+    private let translationService = TranslationService()
     private let textInteractor = TextInteractor()
     private let clipboardManager = ClipboardManager()
     private let synonymPanel = SynonymPanel()
@@ -195,6 +196,18 @@ final class AppState: ObservableObject {
         let synonyms = synonymService.fetchSynonyms(for: word)
         slog("'\(word)' -> \(synonyms.count) synonyms: \(synonyms.map(\.word))")
         showPanel(synonyms: synonyms, originalWord: word)
+
+        // Launch async translation (isFrench = word found in thesaurus)
+        let isFrench = !synonyms.isEmpty
+        translationService.translate(word: word, isFrench: isFrench) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let translated, let direction):
+                self.synonymPanel.updateTranslation(.success(translated: translated, direction: direction))
+            case .error(let message):
+                self.synonymPanel.updateTranslation(.error(message))
+            }
+        }
     }
 
     private func captureAndFetchSynonyms() {
@@ -257,6 +270,9 @@ final class AppState: ObservableObject {
             onDismiss: { [weak self] in
                 self?.dismissPanel()
             },
+            onSelectTranslation: { [weak self] text in
+                self?.replaceWithTranslation(text)
+            },
             shortcutDisplayString: shortcutDisplayString
         )
     }
@@ -265,6 +281,20 @@ final class AppState: ObservableObject {
         synonymPanel.close()
 
         clipboardManager.writeString(synonym.word)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.textInteractor.pasteFromClipboard()
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                self?.clipboardManager.restore()
+            }
+        }
+    }
+
+    private func replaceWithTranslation(_ text: String) {
+        synonymPanel.close()
+
+        clipboardManager.writeString(text)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
             self?.textInteractor.pasteFromClipboard()
