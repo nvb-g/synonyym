@@ -22,8 +22,13 @@ final class TranslationService {
         let direction: TranslationDirection = isFrench ? .frToEn : .enToFr
         let langPair = isFrench ? "fr|en" : "en|fr"
 
-        guard let encoded = word.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://api.mymemory.translated.net/get?q=\(encoded)&langpair=\(langPair)") else {
+        var components = URLComponents(string: "https://api.mymemory.translated.net/get")!
+        components.queryItems = [
+            URLQueryItem(name: "q", value: word),
+            URLQueryItem(name: "langpair", value: langPair)
+        ]
+
+        guard let url = components.url else {
             DispatchQueue.main.async {
                 completion(.error("URL invalide"))
             }
@@ -50,8 +55,11 @@ final class TranslationService {
                 return
             }
 
+            // Decode any percent-encoded characters the API may return
+            let decoded = translatedText.removingPercentEncoding ?? translatedText
+
             DispatchQueue.main.async {
-                completion(.success(translated: translatedText.lowercased(), direction: direction))
+                completion(.success(translated: decoded.lowercased(), direction: direction))
             }
         }.resume()
     }
