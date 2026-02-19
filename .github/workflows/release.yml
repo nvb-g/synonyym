@@ -1,0 +1,42 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Build
+        run: |
+          xcodebuild -project Synonyym.xcodeproj \
+            -scheme Synonyym \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Create zip
+        run: |
+          cd build/Build/Products/Release
+          ditto -c -k --keepParent Synonyym.app Synonyym.zip
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/Build/Products/Release/Synonyym.zip
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            1. Download **Synonyym.zip** below
+            2. Unzip and drag **Synonyym.app** to your Applications folder
+            3. Open the app — on first launch, right-click > Open to bypass Gatekeeper
+            4. Grant Accessibility permission when prompted (System Settings > Privacy & Security > Accessibility)

@@ -2,6 +2,15 @@
 
 A lightweight macOS menubar app for **French synonyms** and **FR/EN translation**, triggered by a single global shortcut.
 
+## Download
+
+Download the latest version from the [Releases page](https://github.com/nvb-g/synonyym/releases/latest).
+
+1. Download **Synonyym.zip**
+2. Unzip and drag **Synonyym.app** to your Applications folder
+3. On first launch, right-click the app > **Open** (required to bypass Gatekeeper since the app is not notarized)
+4. Grant **Accessibility** permission when prompted
+
 ## Features
 
 - **Global shortcut** (`Cmd+Shift+S`) works in any application
@@ -19,10 +28,10 @@ A lightweight macOS menubar app for **French synonyms** and **FR/EN translation*
 - macOS 14.0+ (Sonoma)
 - **Accessibility permission** (System Settings > Privacy & Security > Accessibility) — required to simulate keyboard events via CGEvent
 
-## Build
+## Build from source
 
 ```bash
-xcodebuild -project Synonyym.xcodeproj -scheme Synonyym -configuration Debug build
+xcodebuild -project Synonyym.xcodeproj -scheme Synonyym -configuration Release build
 ```
 
 Or open `Synonyym.xcodeproj` in Xcode and run with `Cmd+R`.
