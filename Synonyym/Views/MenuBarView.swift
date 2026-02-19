@@ -1,7 +1,9 @@
 import SwiftUI
+import ServiceManagement
 
 struct MenuBarView: View {
     @EnvironmentObject var appState: AppState
+    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -14,6 +16,20 @@ struct MenuBarView: View {
                 appState.openSettings()
             }
             .keyboardShortcut(",", modifiers: .command)
+
+            Toggle("Lancer au démarrage", isOn: $launchAtLogin)
+                .onChange(of: launchAtLogin) { newValue in
+                    do {
+                        if newValue {
+                            try SMAppService.mainApp.register()
+                        } else {
+                            try SMAppService.mainApp.unregister()
+                        }
+                    } catch {
+                        slog("Launch at login error: \(error)")
+                        launchAtLogin = SMAppService.mainApp.status == .enabled
+                    }
+                }
 
             Divider()
 
